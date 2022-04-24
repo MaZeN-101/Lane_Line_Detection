@@ -1,0 +1,559 @@
+import glob  
+import cv2
+import pickle
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+import numpy as np
+from ipywidgets import interact, interactive, fixed
+%matplotlib inline
+
+
+def show_images(images, gray=None, divider = 2):
+    rows = (len(images)+1)//divider
+    plt.figure(figsize=(16, 16))
+    for idx, img in enumerate(images):
+        plt.subplot(rows, divider, idx+1)
+        plt.imshow(img, cmap="gray" if len(img.shape) == 2 else gray)
+        plt.xticks([])
+        plt.yticks([])
+
+    plt.show()
+    
+    
+camera_cal_imgs = [mpimg.imread(path) for path in glob.glob("camera_cal/*")]
+show_images(camera_cal_imgs[:4], divider=4)
+
+
+def grayscale(img, opencv_read=False):
+    if opencv_read:
+        return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    return cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    
+    
+    objp = np.zeros((6*9, 3), np.float32)
+objp[:,:2] = np.mgrid[0:9, 0:6].T.reshape(-1,2)
+objpoints = []
+imgpoints = []
+
+def find_and_draw_chessboard(img, pattern_size= (9,6)):
+    gray = grayscale(img)
+    ret, corners = cv2.findChessboardCorners(gray, pattern_size, None)
+    if ret:
+        objpoints.append(objp)
+        imgpoints.append(corners)
+        cv2.drawChessboardCorners(img, pattern_size, corners, ret)
+    return img
+
+fig, axs = plt.subplots(5,4, figsize=(16, 16))
+axs = axs.ravel()
+for idx, img in enumerate(camera_cal_imgs):
+    res_img = find_and_draw_chessboard(img)        
+    axs[idx].axis('off')
+    axs[idx].imshow(res_img)
+    
+sample_img = mpimg.imread("camera_cal/calibration1.jpg")
+img_size = sample_img.shape[:2]
+ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints,img_size, None, None)
+dist_pickle = {"mtx": mtx, "dist": dist}
+pickle.dump( dist_pickle, open( "calibration.p", "wb" ) )
+
+def undistort(img):
+    undist = cv2.undistort(img, mtx, dist, None, mtx)
+    return undist
+    
+def undistort_image(img):
+    udistord_img = undistort(img)
+    f, (ax1, ax2) = plt.subplots(1, 2, figsize=(16,16))
+    ax1.imshow(img)
+    ax1.set_title('Original Image', fontsize=18)
+    ax2.imshow(udistord_img)
+    ax2.set_title('Undistorted Image', fontsize=18)
+    return udistord_img
+
+res = undistort_image(sample_img)   
+
+
+test_images = [mpimg.imread(path) for path in glob.glob("test_images/*")]
+
+undistort_images = list(map(lambda img: undistort_image(img), test_images[:2]))
+
+
+height, width = test_images[0].shape[:2]
+p1 = (575, 465)
+p2 = (705, 465)
+p3 = (255, 685)
+p4 = (1050, 685)
+line_color = (0, 255, 0) # Green
+pd1 = (450, 0)
+pd2 = (width - 450, 0)
+pd3 = (450, height)
+pd4 = (width - 450, height)
+
+
+def draw_polygon_on_image(img, line_color=(0, 255,0)):
+    cv2.line(img, p1, p2, line_color, 3)
+    cv2.line(img, p2, p4, line_color, 3)
+    cv2.line(img, p4, p3, line_color, 3)
+    cv2.line(img, p3, p1, line_color, 3)
+    return  img
+    
+src_selected_images = list(map(lambda img: draw_polygon_on_image(img), test_images))
+show_images(src_selected_images[:2])
+
+src = np.float32([p1, p2, p3, p4])
+dst = np.float32([pd1, pd2, pd3, pd4])
+
+def unwarp(img, source=src, desctination=dst):
+    h,w = img.shape[:2]
+    M = cv2.getPerspectiveTransform(source, desctination)
+    Minv = cv2.getPerspectiveTransform(desctination, source)
+    warped = cv2.warpPerspective(img, M, (w,h), flags=cv2.INTER_LINEAR)
+    return warped, M, Minv
+    
+def visualize_warped_images(img):
+    unwarped, _, _ = unwarp(img)
+    f, (ax1, ax2) = plt.subplots(1, 2, figsize=(16,16))
+    img = draw_polygon_on_image(img)
+    ax1.imshow(img)
+    ax1.set_title('Undistorted Image', fontsize=18)
+    ax2.imshow(unwarped)
+    ax2.set_title('Unwarped Image', fontsize=18)
+    return unwarped   
+warped_images = list(map(lambda img: visualize_warped_images(img), undistort_images))
+
+
+def extract_rgb_color_spaces(uwimg):
+    unwarp_R = uwimg[:, :, 0]
+    unwarp_G = uwimg[:, :, 1]
+    unwarp_B = uwimg[:, :, 2]
+    
+    return unwarp_R,unwarp_G,unwarp_B
+
+def extract_hsv_color_spaces(uwimg):
+    unwarp_HSV = cv2.cvtColor(uwimg, cv2.COLOR_RGB2HSV)
+    unwarp_H = unwarp_HSV[:, :, 0]
+    unwarp_S = unwarp_HSV[:, :, 1]
+    unwarp_V = unwarp_HSV[:, :, 2]
+    
+    return unwarp_H,unwarp_S,unwarp_V
+
+def extract_hls_color_spaces(uwimg):
+    unwarp_HLS = cv2.cvtColor(uwimg, cv2.COLOR_RGB2HLS)
+    unwarp_HLS_H = unwarp_HLS[:, :, 0]
+    unwarp_HLS_L = unwarp_HLS[:, :, 1]
+    unwarp_HLS_S = unwarp_HLS[:, :, 2]
+    
+    return unwarp_HLS_H,unwarp_HLS_L,unwarp_HLS_S
+
+def extract_lab_color_spaces(uwimg):
+    unwarped_LAB = cv2.cvtColor(uwimg, cv2.COLOR_RGB2Lab)
+    unwarp_L = unwarped_LAB[:,:,0]
+    unwarp_A = unwarped_LAB[:,:,1]
+    unwarp_B = unwarped_LAB[:,:,2]
+    
+    return unwarp_L, unwarp_A,unwarp_B
+    
+def apply_rgb_filter(unwarp_img):
+    unwarp_R,unwarp_G ,unwarp_B = extract_rgb_color_spaces(unwarp_img)
+    fig, axs = plt.subplots(1, 4, figsize=(16, 16))
+    axs = axs.ravel()
+    axs[0].imshow(unwarp_img)
+    axs[0].set_title('Original ', fontsize=12)
+    axs[1].imshow(unwarp_R, cmap='gray')
+    axs[1].set_title('RGB R-channel', fontsize=12)
+    axs[2].imshow(unwarp_G, cmap='gray')
+    axs[2].set_title('RGB G-Channel', fontsize=12)
+    axs[3].imshow(unwarp_B, cmap='gray')
+    axs[3].set_title('RGB B-channel', fontsize=12)
+    
+sample_img_test = warped_images[0]
+apply_rgb_filter(sample_img_test)
+
+sample_img_test = warped_images[1]
+apply_rgb_filter(sample_img_test)
+
+
+def apply_hsv_filter(unwarp_img):
+    # HSV
+    unwarp_H,unwarp_S,unwarp_V = extract_hsv_color_spaces(unwarp_img)
+    fig, axs = plt.subplots(1, 4, figsize=(16, 16))
+    axs = axs.ravel()
+    
+    axs[0].imshow(unwarp_img)
+    axs[0].set_title('Original ', fontsize=12)
+    axs[1].imshow(unwarp_H, cmap='gray')
+    axs[1].set_title('HSV H-Channel', fontsize=12)
+    axs[2].imshow(unwarp_S, cmap='gray')
+    axs[2].set_title('HSV S-channel', fontsize=12)
+    axs[3].imshow(unwarp_V, cmap='gray')
+    axs[3].set_title('HSV V-Channel', fontsize=12)
+       
+sample_img_test = warped_images[0]
+apply_hsv_filter(sample_img_test)
+
+sample_img_test = warped_images[1]
+apply_hsv_filter(sample_img_test)
+
+def apply_hls_filter(unwarp_img):
+     # HLS
+    unwarp_HLS_H,unwarp_HLS_L,unwarp_HLS_S = extract_hls_color_spaces(unwarp_img)
+    
+    fig, axs = plt.subplots(1, 4, figsize=(16, 16))
+    axs = axs.ravel()
+    
+    axs[0].imshow(unwarp_img)
+    axs[0].set_title('Original ', fontsize=12)
+    axs[1].imshow(unwarp_HLS_H, cmap='gray')
+    axs[1].set_title('HLS H-Channel', fontsize=12)
+    axs[2].imshow(unwarp_HLS_L, cmap='gray')
+    axs[2].set_title('HLS L-channel', fontsize=12)
+    axs[3].imshow(unwarp_HLS_S, cmap='gray')
+    axs[3].set_title('HLS S-Channel', fontsize=12)
+    
+sample_img_test = warped_images[0]
+apply_hls_filter(sample_img_test)
+
+
+sample_img_test = warped_images[1]
+apply_hls_filter(sample_img_test)
+
+
+def apply_lab_filter(unwarp_img):
+    # LAB
+    unwarp_L, unwarp_A,unwarp_B = extract_lab_color_spaces(unwarp_img)
+    
+    fig, axs = plt.subplots(1, 4, figsize=(16, 16))
+    axs = axs.ravel()
+    
+    axs[0].imshow(unwarp_img)
+    axs[0].set_title('Original ', fontsize=12)
+    axs[1].imshow(unwarp_L, cmap='gray')
+    axs[1].set_title('LAB L-Channel', fontsize=12)
+    axs[2].imshow(unwarp_A, cmap='gray')
+    axs[2].set_title('LAB A-channel', fontsize=12)
+    axs[3].imshow(unwarp_B, cmap='gray')
+    axs[3].set_title('LAB B-Channel', fontsize=12)
+    
+sample_img_test = warped_images[0]
+apply_lab_filter(sample_img_test)
+
+sample_img_test = warped_images[1]
+apply_lab_filter(sample_img_test)
+
+def abs_sobel_thresh(gray, orient='x', thresh_min=0, thresh_max=255):
+    dx = 1 if orient=='x'  else  0
+    dy = 1 if orient=='y'  else  0
+    sobel = cv2.Sobel(gray, cv2.CV_64F,dx ,dy)
+    abs_sobel = np.absolute(sobel)
+    scaled_sobel = np.uint8(255*abs_sobel/np.max(abs_sobel))    
+    binary_sobel = np.zeros_like(scaled_sobel)
+    binary_sobel[(scaled_sobel >= thresh_min) & (scaled_sobel <= thresh_max)] = 1
+    return binary_sobel
+    
+def apply_sobel_threshold(img, gray, min_thresh, max_thresh):
+    f, axs = plt.subplots(1, 3, figsize=(16, 16))
+    axs[0].imshow(img)
+    axs[0].set_title('Unwarped Image', fontsize=12)
+    abs_sobel_x = abs_sobel_thresh(gray, 'x', min_thresh, max_thresh) 
+    axs[1].imshow(abs_sobel_x, cmap='gray')
+    axs[1].set_title('Sobel Absolute - X', fontsize=12)
+    abs_sobel_y = abs_sobel_thresh(gray, 'y', min_thresh, max_thresh)
+    axs[2].imshow(abs_sobel_y, cmap='gray')
+    axs[2].set_title('Sobel Absolute - Y', fontsize=12)
+    plt.show()
+    
+min_thresh=50
+max_thresh=190
+
+unwarped_img = warped_images[0]
+_,gray,_ = extract_hls_color_spaces(unwarped_img)
+apply_sobel_threshold(unwarped_img,gray,min_thresh, max_thresh)
+
+unwarped_img = warped_images[1]
+_,gray,_ = extract_hls_color_spaces(unwarped_img)
+apply_sobel_threshold(unwarped_img,gray,min_thresh, max_thresh)
+
+unwarped_img = warped_images[0]
+_,_,gray = extract_lab_color_spaces(unwarped_img)
+apply_sobel_threshold(unwarped_img,gray,min_thresh, max_thresh)
+
+unwarped_img = warped_images[1]
+_,_,gray = extract_lab_color_spaces(unwarped_img)
+apply_sobel_threshold(unwarped_img,gray,min_thresh, max_thresh)
+
+def mag_threshold(gray, sobel_kernel=3, mag_thresh=(0, 255)):
+    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=sobel_kernel)
+    sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=sobel_kernel)
+    gradmag = np.sqrt(sobelx**2 + sobely**2)
+    scale_factor = np.max(gradmag)/255 
+    gradmag = (gradmag/scale_factor).astype(np.uint8) 
+    binary_output = np.zeros_like(gradmag)
+    binary_output[(gradmag >= mag_thresh[0]) & (gradmag <= mag_thresh[1])] = 1
+    return binary_output
+    
+def apply_sobel_mag_gradient(uwimg,gray,sobel_kernel, min_thresh, max_thresh):
+    sobel_mag = mag_threshold(gray, sobel_kernel,(min_thresh, max_thresh))    
+    f, (ax1, ax2) = plt.subplots(1, 2, figsize=(16,16))
+    ax1.imshow(uwimg)
+    ax1.set_title('Unwarped Image', fontsize=18)
+    ax2.imshow(sobel_mag, cmap='gray')
+    ax2.set_title('Sobel Magnitude', fontsize=18)
+    
+min_thresh=50
+max_thresh=190
+sobel_kernel = 15
+
+# Unwarped image
+unwarped_img = warped_images[0]
+# Etract HSL S color channel
+_,gray,_ = extract_hls_color_spaces(unwarped_img)
+# Appy and visualize 
+apply_sobel_mag_gradient(unwarped_img,gray,sobel_kernel,min_thresh, max_thresh)
+
+
+# Unwarped image
+unwarped_img = warped_images[1]
+# Etract HSL S color channel
+_,gray,_ = extract_hls_color_spaces(unwarped_img)
+# Appy and visualize 
+apply_sobel_mag_gradient(unwarped_img,gray,sobel_kernel,min_thresh, max_thresh)
+
+
+# Unwarped image
+unwarped_img = warped_images[0]
+# Etract LAB B color channel
+_,_,gray = extract_lab_color_spaces(unwarped_img)
+# Appy and visualize 
+apply_sobel_mag_gradient(unwarped_img,gray,sobel_kernel,min_thresh, max_thresh)
+
+# Unwarped image
+unwarped_img = warped_images[1]
+# Etract LAB B color channel
+_,_,gray = extract_lab_color_spaces(unwarped_img)
+# Appy and visualize 
+apply_sobel_mag_gradient(unwarped_img,gray,sobel_kernel,min_thresh, max_thresh)
+
+
+def dir_threshold(gray, sobel_kernel=3, thresh=(0, np.pi/2)):
+culate the x and y gradients
+    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=sobel_kernel)
+    sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=sobel_kernel)
+    # Take the absolute value of the gradient direction, 
+    # apply a threshold, and create a binary image result
+    absgraddir = np.arctan2(np.absolute(sobely), np.absolute(sobelx))
+    
+    binary_output =  np.ones_like(absgraddir)
+    
+    binary_output[(absgraddir >= thresh[0]) & (absgraddir <= thresh[1])] = 0
+
+    # Return the binary image
+    return binary_output
+     
+     
+def apply_sobel_dir_gradient(uwimg,gray,sobel_kernel, min_thresh, max_thresh):
+
+    sobel_mag = dir_threshold(gray, sobel_kernel,(min_thresh, max_thresh))
+    
+    f, (ax1, ax2) = plt.subplots(1, 2, figsize=(16,16))
+    ax1.imshow(uwimg)
+    ax1.set_title('Unwarped Image', fontsize=18)
+    
+    ax2.imshow(sobel_mag, cmap='gray')
+    ax2.set_title('Sobel Direction', fontsize=18)
+    
+ dir_min_thresh=0.3
+ dir_max_thresh=1.51 # Max --> PI/2
+ dir_sobel_kernel = 15
+ 
+ unwarped_img = warped_images[0]
+_,gray,_ = extract_hls_color_spaces(unwarped_img)
+apply_sobel_dir_gradient(unwarped_img,gray,dir_sobel_kernel,dir_min_thresh,dir_max_thresh )
+
+
+unwarped_img = warped_images[1]
+_,gray,_ = extract_hls_color_spaces(unwarped_img)
+apply_sobel_dir_gradient(unwarped_img,gray,dir_sobel_kernel,dir_min_thresh,dir_max_thresh )
+
+
+unwarped_img = warped_images[0]
+_,_,gray = extract_lab_color_spaces(unwarped_img)
+apply_sobel_dir_gradient(unwarped_img,gray,dir_sobel_kernel,dir_min_thresh,dir_max_thresh )
+
+
+
+# Unwarped image
+unwarped_img = warped_images[1]
+# Etract LAB B color channel
+_,_,gray = extract_lab_color_spaces(unwarped_img)
+# Appy and visualize 
+apply_sobel_dir_gradient(unwarped_img,gray,dir_sobel_kernel,dir_min_thresh,dir_max_thresh )
+
+def combine_thresholds(unwarp_img, gray, mag_kernel, mag_thresh, dir_thresh, dir_kernel ):
+
+    gradx = abs_sobel_thresh(gray, orient='x', thresh_min=mag_thresh[0], thresh_max=mag_thresh[1])
+    grady = abs_sobel_thresh(gray, orient='y', thresh_min=mag_thresh[0], thresh_max=mag_thresh[1])
+    
+    mag_binary = mag_threshold(gray, sobel_kernel=mag_kernel, mag_thresh=mag_thresh)
+    
+    dir_binary = dir_threshold(gray, sobel_kernel=dir_kernel, thresh=dir_thresh)
+    
+    combined = np.zeros_like(dir_binary)
+    combined[((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1))] = 1
+    
+    # A combine binary image 
+    return combined
+    
+def visualize_combine_imgages(unwarp_img, gray, mag_kernel, mag_thresh, dir_thresh, dir_kernel):
+    """
+    An utility function to visualize sobel combined binary images with the original unwarped image
+    """
+    combined = combine_thresholds(unwarp_img, gray, mag_kernel, mag_thresh, dir_thresh, dir_kernel )
+    # Visualize sobel magnitude + direction threshold
+    f, (ax1, ax2) = plt.subplots(1, 2, figsize=(16,16))
+    
+    ax1.imshow(unwarp_img)
+    ax1.set_title('Unwarped Image', fontsize=18)
+    
+    ax2.imshow(combined, cmap='gray')
+    ax2.set_title('Sobel Magnitude + Direction', fontsize=18)
+    
+dir_thresh = (dir_min_thresh,dir_max_thresh)
+mag_thresh = (min_thresh, max_thresh)
+
+# Unwarped image
+unwarped_img = warped_images[0]
+# Etract HSL S color channel
+_,gray,_ = extract_hls_color_spaces(unwarped_img)
+# Appy and visualize 
+visualize_combine_imgages(unwarped_img,gray,sobel_kernel,mag_thresh,dir_thresh,dir_sobel_kernel )
+
+
+# Unwarped image
+unwarped_img = warped_images[1]
+# Etract HSL S color channel
+_,gray,_ = extract_hls_color_spaces(unwarped_img)
+# Appy and visualize 
+visualize_combine_imgages(unwarped_img,gray,sobel_kernel,mag_thresh,dir_thresh,dir_sobel_kernel )
+
+# Unwarped image
+unwarped_img = warped_images[0]
+# Etract LAB B color channel
+_,_,gray = extract_lab_color_spaces(unwarped_img)
+# Appy and visualize 
+visualize_combine_imgages(unwarped_img,gray,sobel_kernel,mag_thresh,dir_thresh,dir_sobel_kernel )
+
+ # Unwarped image
+unwarped_img = warped_images[1]
+# Etract LAB B color channel
+_,_,gray = extract_lab_color_spaces(unwarped_img)
+# Appy and visualize 
+visualize_combine_imgages(unwarped_img,gray,sobel_kernel,mag_thresh,dir_thresh,dir_sobel_kernel )
+
+
+
+# Use exclusive lower bound (>) and inclusive upper (<=)
+def hls_l_nomalize(img, thresh=(220, 255)):
+    """
+    This is used to nomalize HLS L color channel
+    """
+    # 1) Convert to HLS color space
+    _,hls_l,_ = extract_hls_color_spaces(img)
+    hls_l = hls_l*(255/np.max(hls_l))
+    # 2) Apply a threshold to the L channel
+    binary_output = np.zeros_like(hls_l)
+    binary_output[(hls_l > thresh[0]) & (hls_l <= thresh[1])] = 1
+    # 3) Return a binary image of threshold result
+    return binary_output
+    
+    
+sample_img = warped_images[1]
+hsl_s = hls_l_nomalize(sample_img)
+
+f, (ax1, ax2) = plt.subplots(1, 2, figsize=(16,16))
+ax1.imshow(sample_img)
+ax1.set_title('Unwarped Image', fontsize=12)
+ax2.imshow(hsl_s, cmap='gray')
+ax2.set_title('HLS L Color Channel', fontsize=12)  
+
+def lab_b_nomalize(unwarped_img, thresh=(190,255)):
+    _,_,lab_b = extract_lab_color_spaces(unwarped_img)
+    # don't normalize if there are no yellows in the image
+    if np.max(lab_b) > 175:
+        lab_b = lab_b*(255/np.max(lab_b))
+    # 2) Apply a threshold to the L channel
+    binary_output = np.zeros_like(lab_b)
+    binary_output[((lab_b > thresh[0]) & (lab_b <= thresh[1]))] = 1
+    # 3) Return a binary image of threshold result
+    return binary_output
+    
+    
+sample_img = warped_images[0]
+lab_b = lab_b_nomalize(sample_img)
+
+f, (ax1, ax2) = plt.subplots(1, 2, figsize=(16,16))
+ax1.imshow(sample_img)
+ax1.set_title('Unwarped Image', fontsize=12)
+ax2.imshow(lab_b, cmap='gray')
+ax2.set_title('LAB B Color Channel', fontsize=12)    
+
+def pipeline(p_img):
+    
+    # Undistort images
+    undistort_img = undistort(p_img)
+    
+    # Persfective transform
+    img_unwarp,M, Minv = unwarp(undistort_img, src, dst)
+    
+    # HLS L-channel Threshold (using default parameters)
+    img_hls_L = hls_l_nomalize(img_unwarp)
+
+    # Lab B-channel Threshold (using default parameters)
+    img_lab_B = lab_b_nomalize(img_unwarp)
+    
+    # Combine HLS and Lab B channel thresholds
+    combined = np.zeros_like(img_lab_B)
+    combined[(img_hls_L == 1) | (img_lab_B == 1)] = 1
+    
+    return combined, Minv
+    
+images = glob.glob('./test_images/*.jpg')
+sample_img = mpimg.imread(images[0])
+combine_img, MinV = pipeline(sample_img)
+
+f, (ax1, ax2) = plt.subplots(1, 2, figsize=(16,16))
+ax1.imshow(sample_img)
+ax1.set_title('Original Image', fontsize=12)
+ax2.imshow(combine_img, cmap='gray')
+ax2.set_title('Pipeline Output', fontsize=12)
+
+images = glob.glob('./test_images/*.jpg')
+sample_img = mpimg.imread(images[1])
+combine_img, MinV = pipeline(sample_img)
+
+f, (ax1, ax2) = plt.subplots(1, 2, figsize=(16,16))
+ax1.imshow(sample_img)
+ax1.set_title('Original Image', fontsize=12)
+ax2.imshow(combine_img, cmap='gray')
+ax2.set_title('Pipeline Output', fontsize=12)
+    
+images = glob.glob('./test_images/*.jpg')                                          
+fig, axs = plt.subplots(len(images),2, figsize=(16, 16))
+axs = axs.ravel()
+                  
+i = 0
+for image in images:
+    img = cv2.imread(image)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_bin,MinV = pipeline(img)
+    axs[i].imshow(img)
+    axs[i].axis('off')
+    axs[i].set_title("Original Image",fontsize=12)
+    i += 1
+    axs[i].imshow(img_bin, cmap='gray')
+    axs[i].axis('off')
+    axs[i].set_title("Binary Image",fontsize=12)
+    i += 1
+        
+        
+        
